@@ -1,0 +1,184 @@
+name: Build macOS Universal DMG (unsigned, both arch)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+env:
+  APP_NAME: "MyApp"                       # 変更可: アプリ名
+  ENTRYPOINT: "main.py"                   # 変更可: エントリポイント
+  BUNDLE_ID: "com.example.myapp"          # 変更可: バンドルID
+  ICON_PATH: "assets/app.icns"            # 任意: 無ければ自動スキップ
+
+jobs:
+  # 1) Intel (x86_64) 版をビルド
+  build-intel:
+    runs-on: macos-13   # Intel ランナー
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip pyinstaller
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Build .app (PyInstaller)
+        run: |
+          if [ -f mac.spec ]; then
+            pyinstaller --noconfirm mac.spec
+          else
+            ICON_ARG=""
+            if [ -f "$ICON_PATH" ]; then ICON_ARG="--icon $ICON_PATH"; fi
+            pyinstaller --windowed --noconfirm \
+              --name "${APP_NAME}" \
+              --osx-bundle-identifier "${BUNDLE_ID}" \
+              $ICON_ARG \
+              "${ENTRYPOINT}"
+          fi
+          ls -la dist
+
+      - name: Rename artifact (Intel)
+        run: |
+          mv "dist/${APP_NAME}.app" "dist/${APP_NAME}-Intel.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-intel
+          path: dist/${{ env.APP_NAME }}-Intel.app
+
+  # 2) Apple Silicon (arm64) 版をビルド
+  build-arm:
+    runs-on: macos-14   # Apple Silicon ランナー
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python deps
+        run: |
+          python -m pip install -U pip pyinstaller
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Build .app (PyInstaller)
+        run: |
+          if [ -f mac.spec ]; then
+            pyinstaller --noconfirm mac.spec
+          else
+            ICON_ARG=""
+            if [ -f "$ICON_PATH" ]; then ICON_ARG="--icon $ICON_PATH"; fi
+            pyinstaller --windowed --noconfirm \
+              --name "${APP_NAME}" \
+              --osx-bundle-identifier "${BUNDLE_ID}" \
+              $ICON_ARG \
+              "${ENTRYPOINT}"
+          fi
+          ls -la dist
+
+      - name: Rename artifact (AppleSilicon)
+        run: |
+          mv "dist/${APP_NAME}.app" "dist/${APP_NAME}-AppleSilicon.app"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-arm
+          path: dist/${{ env.APP_NAME }}-AppleSilicon.app
+
+  # 3) 両 .app を1つのDMGに梱包
+  package-universal-dmg:
+    runs-on: macos-14
+    needs: [build-intel, build-arm]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Intel app
+        uses: actions/download-artifact@v4
+        with:
+          name: app-intel
+          path: bundle
+
+      - name: Download AppleSilicon app
+        uses: actions/download-artifact@v4
+        with:
+          name: app-arm
+          path: bundle
+
+      - name: Prepare bundle contents
+        run: |
+          set -e
+          cd bundle
+
+          # 起動ランチャー（機種自動判別）
+          cat > "Start ${APP_NAME}.command" <<'SH'
+          #!/bin/bash
+          DIR="$(cd "$(dirname "$0")" && pwd)"
+          ARCH="$(uname -m)"
+          if [ "$ARCH" = "arm64" ]; then
+            open "$DIR/'${APP_NAME}-AppleSilicon.app'"
+          else
+            open "$DIR/'${APP_NAME}-Intel.app'"
+          fi
+          SH
+          chmod +x "Start ${APP_NAME}.command"
+
+          # README（Gatekeeper案内・権限など）
+          cat > "README.txt" <<TXT
+          【${APP_NAME} の起動方法（署名・公証なし配布）】
+
+          1) ${APP_NAME}-Intel.app と ${APP_NAME}-AppleSilicon.app どちらも同梱されています。
+             - Apple シリコン(M1/M2/M3...) の場合: AppleSilicon 版
+             - Intel の場合: Intel 版
+             わからない場合は「Start ${APP_NAME}.command」をダブルクリックしてください。
+
+          2) macOS の Gatekeeper により、初回は警告が表示されることがあります。
+             - Finderで .app を「右クリック → 開く」→ ダイアログの「開く」
+             - または「設定 → プライバシーとセキュリティ」下部の「このまま開く」
+
+          3) （必要に応じて）
+             - PyAutoGUI等を使用する場合は「設定 → プライバシーとセキュリティ」で
+               アクセシビリティ/画面収録の権限を付与してください。
+             - Selenium/DrissionPage を使う場合、Google Chrome のインストールが必要です。
+
+          4) うまく起動しない場合
+             - ターミナルで隔離属性を外す（自己責任）:
+               xattr -dr com.apple.quarantine "/Applications/${APP_NAME}-Intel.app"
+               xattr -dr com.apple.quarantine "/Applications/${APP_NAME}-AppleSilicon.app"
+
+          TXT
+
+          cd ..
+
+      - name: Install create-dmg
+        run: |
+          brew install create-dmg || true
+
+      - name: Make Universal DMG
+        run: |
+          set -e
+          mkdir -p dist
+          BG_ARG=""
+          if [ -f "packaging/dmg-background.png" ]; then
+            BG_ARG="--background 'packaging/dmg-background.png'"
+          fi
+
+          # アイコン配置（お好みでXYを調整）
+          create-dmg --overwrite \
+            --volname "${APP_NAME}" \
+            $BG_ARG \
+            --window-pos 200 120 --window-size 720 440 \
+            --icon "${APP_NAME}-Intel.app" 140 170 \
+            --icon "${APP_NAME}-AppleSilicon.app" 320 170 \
+            --icon "Start ${APP_NAME}.command" 500 170 \
+            --app-drop-link 600 170 \
+            "dist/${APP_NAME}-Universal.dmg" "bundle"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${ { env.APP_NAME } }-Universal-DMG
+          path: dist/${{ env.APP_NAME }}-Universal.dmg

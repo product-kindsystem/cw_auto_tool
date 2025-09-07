@@ -14,7 +14,7 @@ env:
 jobs:
   # 1) Intel (x86_64) 版ビルド
   build-intel:
-    runs-on: macos-13   # Intel ランナー
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
@@ -42,18 +42,23 @@ jobs:
           fi
           ls -la dist
 
-      - name: Rename artifact (Intel)
+      - name: Rename .app (Intel)
         run: |
           mv "dist/${APP_NAME}.app" "dist/${APP_NAME}-Intel.app"
+
+      - name: Zip .app (Intel)
+        run: |
+          cd dist
+          zip -qry "${APP_NAME}-Intel.app.zip" "${APP_NAME}-Intel.app"
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-intel
-          path: dist/${{ env.APP_NAME }}-Intel.app
+          path: dist/${{ env.APP_NAME }}-Intel.app.zip
 
   # 2) Apple Silicon (arm64) 版ビルド
   build-arm:
-    runs-on: macos-14   # Apple Silicon ランナー
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -81,14 +86,19 @@ jobs:
           fi
           ls -la dist
 
-      - name: Rename artifact (AppleSilicon)
+      - name: Rename .app (AppleSilicon)
         run: |
           mv "dist/${APP_NAME}.app" "dist/${APP_NAME}-AppleSilicon.app"
+
+      - name: Zip .app (AppleSilicon)
+        run: |
+          cd dist
+          zip -qry "${APP_NAME}-AppleSilicon.app.zip" "${APP_NAME}-AppleSilicon.app"
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-arm
-          path: dist/${{ env.APP_NAME }}-AppleSilicon.app
+          path: dist/${{ env.APP_NAME }}-AppleSilicon.app.zip
 
   # 3) 両 .app を1つの DMG に梱包
   package-universal-dmg:
@@ -97,62 +107,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Intel app
+      - name: Download Intel app zip
         uses: actions/download-artifact@v4
         with:
           name: app-intel
-          path: bundle
+          path: bundle/intel
 
-      - name: Download AppleSilicon app
+      - name: Download AppleSilicon app zip
         uses: actions/download-artifact@v4
         with:
           name: app-arm
-          path: bundle
+          path: bundle/arm
 
-      # 念のため、bundle直下に集約（階層ズレ対策）
-      - name: Normalize bundle layout
+      - name: Unzip apps & normalize
         env:
           APP_NAME: ${{ env.APP_NAME }}
         run: |
           set -euxo pipefail
-          echo "=== Tree before normalize ==="
-          find bundle -maxdepth 3 -print
+          ls -R bundle || true
 
-          INTEL_SRC="$(find bundle -type d -name "${APP_NAME}-Intel.app" -print -quit || true)"
-          if [ -z "${INTEL_SRC}" ]; then
-            INTEL_SRC="$(find bundle -type d -name "${APP_NAME}.app" -print -quit || true)"
-          fi
-          if [ -z "${INTEL_SRC}" ]; then
-            echo "Intel .app not found under bundle/"
-            exit 1
-          fi
-          mv -f "${INTEL_SRC}" "bundle/${APP_NAME}-Intel.app"
+          # 解凍
+          unzip -q "bundle/intel/${APP_NAME}-Intel.app.zip" -d bundle
+          unzip -q "bundle/arm/${APP_NAME}-AppleSilicon.app.zip" -d bundle
 
-          ARM_SRC="$(find bundle -type d -name "${APP_NAME}-AppleSilicon.app" -print -quit || true)"
-          if [ -z "${ARM_SRC}" ]; then
-            ARM_SRC="$(find bundle -type d -name "${APP_NAME}.app" -print -quit || true)"
-          fi
-          if [ -z "${ARM_SRC}" ]; then
-            echo "AppleSilicon .app not found under bundle/"
-            exit 1
-          fi
-          if [ "${ARM_SRC}" = "bundle/${APP_NAME}-Intel.app" ]; then
-            echo "ARM app path conflicts with Intel app path"
-            exit 1
-          fi
-          mv -f "${ARM_SRC}" "bundle/${APP_NAME}-AppleSilicon.app"
-
-          echo "=== Tree after normalize ==="
+          # 結果確認
+          test -d "bundle/${APP_NAME}-Intel.app"
+          test -d "bundle/${APP_NAME}-AppleSilicon.app"
+          echo "=== Tree after unzip ==="
           find bundle -maxdepth 2 -print
 
-      - name: Prepare bundle contents
+      - name: Prepare bundle contents (launcher & README)
         env:
           APP_NAME: ${{ env.APP_NAME }}
         run: |
           set -euxo pipefail
           cd bundle
 
-          # 起動ランチャー（機種自動判別）: 変数展開あり。$DIR/$ARCH は実行時に必要なので \ でエスケープ
+          # 起動ランチャー
           cat > "Start ${APP_NAME}.command" <<SH
           #!/bin/bash
           DIR="\$(cd "\$(dirname "\$0")" && pwd)"
@@ -165,25 +156,20 @@ jobs:
           SH
           chmod +x "Start ${APP_NAME}.command"
 
-          # README（Gatekeeper案内・権限など）
+          # README
           cat > "README.txt" <<TXT
           【${APP_NAME} の起動方法（署名・公証なし配布）】
 
-          1) ${APP_NAME}-Intel.app と ${APP_NAME}-AppleSilicon.app の両方を同梱。
-             - Apple シリコン: AppleSilicon 版
-             - Intel: Intel 版
-             不明なら「Start ${APP_NAME}.command」を実行してください。
+          1) Apple シリコン: ${APP_NAME}-AppleSilicon.app
+             Intel: ${APP_NAME}-Intel.app
+             不明な場合は「Start ${APP_NAME}.command」を実行。
 
-          2) 初回は Gatekeeper でブロックされる場合:
+          2) 初回の Gatekeeper:
              - Finder で .app を右クリック→「開く」→「開く」
-             - または 設定 > プライバシーとセキュリティ の「このまま開く」
+             - もしくは 設定 > プライバシーとセキュリティ > 「このまま開く」
 
-          3) PyAutoGUI 等を使う場合、設定 > プライバシーとセキュリティ で
-             アクセシビリティ / 画面収録の権限を付与してください。
-
-          4) うまく起動しない場合（自己責任）:
-             xattr -dr com.apple.quarantine "/Applications/${APP_NAME}-Intel.app"
-             xattr -dr com.apple.quarantine "/Applications/${APP_NAME}-AppleSilicon.app"
+          3) PyAutoGUI 等を使う場合は、設定 > プライバシーとセキュリティ で
+             アクセシビリティ/画面収録の権限を付与してください。
           TXT
           cd ..
 
@@ -203,10 +189,10 @@ jobs:
           create-dmg --version || true
           create-dmg --help | head -n 20 || true
 
-          # 既存DMGを削除（--overwriteを使わない）
+          # 既存 DMG を削除（--overwrite は使わない）
           rm -f "$OUT"
 
-          # 背景あり/なしで分岐して作成（create-dmg が失敗したら hdiutil にフォールバック）
+          # 背景あり/なしで作成（失敗時は hdiutil にフォールバック）
           if [ -f "packaging/dmg-background.png" ]; then
             if ! create-dmg \
               --volname "${APP_NAME}" \

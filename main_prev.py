@@ -3,12 +3,11 @@ import random
 import time
 import platform
 from datetime import datetime, timedelta
-from DrissionPage import ChromiumPage, ChromiumOptions
+from DrissionPage import ChromiumPage
 import last_checked_json
 from pathlib import Path
 import textlog as log
 import openvpn as vpn
-import func_mac as fm
 import func_chrome as fc
 import func_crowdworks as fcw
 import last_checked_json
@@ -31,32 +30,13 @@ MAX_CHECK_DAY_COUNT = 15
 VERSION = "V.1.0.0"
 NOT_FOUND_DELETE_DAYS = 7
 VPN_SKIP = True
-MAC_APP_NAME = "cwtool"
-
 
 def main():
 
     # 定義
-    if fm.is_mac_os():
-        print("macOSです。アーキ:", fm.mac_arch(), " Rosetta:", fm.mac_is_rosetta2())
-        APP_DIR = fm.mac_app_base_dir()
-        DATA_DIR = fm.mac_user_data_dir(MAC_APP_NAME)
-        LOG_DIR = DATA_DIR / "log"
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        BASE_DIR_PATH = APP_DIR
-        log_base_dir_path = LOG_DIR
-        user_input = DATA_DIR / "input.xlsx"  # 利用者が差し替える置き場
-        if not user_input.exists():
-            return        
-        input_file_path = user_input
-        LAST_CHECKED_PATH = DATA_DIR / "last_checked.json"
-    else:
-        print("macOSではありません。")
-        BASE_DIR_PATH = Path(sys.argv[0]).parent
-        log_base_dir_path = BASE_DIR_PATH / 'log'
-        input_file_path = BASE_DIR_PATH / 'input.xlsx'
-        LAST_CHECKED_PATH = Path("last_checked.json")
+    BASE_DIR_PATH = Path(sys.argv[0]).parent
+    log_base_dir_path = BASE_DIR_PATH / 'log'
+    input_file_path = BASE_DIR_PATH / 'input.xlsx'
     
 
     # Logger初期化
@@ -93,8 +73,7 @@ def main():
             try:
                 try_driver_vpn_start_count += 1
                 finish_page_and_driver(page, driver, logger)
-                # success = openvpn.restart()
-                success = True
+                success = openvpn.restart()
                 if success:
                     cw_login_url = fcw.get_crowdworks_login_url()
                     success, page, driver, actions = start_page_and_driver(cw_login_url, settings, logger)
@@ -421,7 +400,8 @@ def main():
         # 最終確認メッセージ日時取得
         while True:
             try:
-                data = last_checked_json.read_json(LAST_CHECKED_PATH, default={})
+                cfg = Path("last_checked.json")
+                data = last_checked_json.read_json(cfg, default={})
                 fmt = "%Y年%m月%d日 %H:%M"
                 if "last_checked_time" in data:
                     last_checked_text = data["last_checked_time"]
@@ -615,7 +595,7 @@ def main():
             # 前回メッセージ確認日時として保存
             if not is_error:
                 data["last_checked_time"] = latest_msg_text
-                last_checked_json.write_json(LAST_CHECKED_PATH, data)
+                last_checked_json.write_json(cfg, data)
                 logger.info(f'前回メッセージ確認日時として保存 OK : {latest_msg_text}')
             else:
                 logger.info(f'エラー発生により、前回メッセージ確認日時として保存しません : {latest_msg_text}')
@@ -708,39 +688,21 @@ def isRecaptchaPage(page):
 
 
 def start_page_and_driver(init_url, setting_dic, logger):
+    success = False
+    # Chrome実行（Cloudflare Bot対策回避用）
+    page = ChromiumPage()
+    page.get(init_url)
+    logger.info(f"ChromiumPage 起動")
 
-    if fm.is_mac_os():
-        try:
-            co = ChromiumOptions()
-            chrome_path = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            if Path(chrome_path).exists():
-                co.set_browser_path(chrome_path)
-            page = ChromiumPage(addr_or_opts=co)
-            page.get(init_url)
-            logger.info("ChromiumPage 起動")
-        except Exception as e:
-            logger.error(f"ChromiumPage 起動失敗: {e}")
-            return False, None, None, None
-    else:
-        # Chrome実行（Cloudflare Bot対策回避用）
-        page = ChromiumPage()
-        page.get(init_url)
-        logger.info(f"ChromiumPage 起動")
+    # インスタンスを作成
+    driver = WebDriverEx(setting_dic, logger)
+    actions = ActionChains(driver.driver)
+    logger.info(f"WebDriverEx 起動")
 
-    try:
-        driver = WebDriverEx(setting_dic, logger)
-        actions = ActionChains(driver.driver)
-        logger.info("WebDriverEx 起動")
-        driver.get(init_url)
-        sleep(3)
-        return True, page, driver, actions
-    except Exception as e:
-        logger.error(f"WebDriverEx 起動失敗: {e}")
-        try:
-            page.quit()
-        except Exception:
-            pass
-        return False, None, None, None
+    # ページアクセス
+    driver.get(init_url)
+    sleep(3)
+    return True, page, driver, actions
 
 
 def finish_page_and_driver(page, driver, logger):

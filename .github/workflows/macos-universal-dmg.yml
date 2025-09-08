@@ -38,6 +38,7 @@ jobs:
               --name "${APP_NAME}" \
               --osx-bundle-identifier "${BUNDLE_ID}" \
               $ICON_ARG \
+              --add-data "input.xlsx:." \
               "${ENTRYPOINT}"
           fi
           ls -la dist

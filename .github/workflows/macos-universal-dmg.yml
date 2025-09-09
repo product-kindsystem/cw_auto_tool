@@ -38,6 +38,8 @@ jobs:
               --name "${APP_NAME}" \
               --osx-bundle-identifier "${BUNDLE_ID}" \
               $ICON_ARG \
+              --hidden-import DrissionPage \
+              --hidden-import selenium \
               "${ENTRYPOINT}"
           fi
           ls -la dist

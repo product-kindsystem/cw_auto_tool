@@ -12,9 +12,9 @@ env:
   ICON_PATH: "assets/app.icns"            # 任意: 無ければ自動スキップ
 
 jobs:
-  # 1) Intel (x86_64) 版をビルド
+  # 1) Intel (x86_64) 版ビルド
   build-intel:
-    runs-on: macos-13   # Intel ランナー
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
@@ -42,18 +42,23 @@ jobs:
           fi
           ls -la dist
 
-      - name: Rename artifact (Intel)
+      - name: Rename .app (Intel)
         run: |
           mv "dist/${APP_NAME}.app" "dist/${APP_NAME}-Intel.app"
+
+      - name: Zip .app (Intel)
+        run: |
+          cd dist
+          zip -qry "${APP_NAME}-Intel.app.zip" "${APP_NAME}-Intel.app"
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-intel
-          path: dist/${{ env.APP_NAME }}-Intel.app
+          path: dist/${{ env.APP_NAME }}-Intel.app.zip
 
-  # 2) Apple Silicon (arm64) 版をビルド
+  # 2) Apple Silicon (arm64) 版ビルド
   build-arm:
-    runs-on: macos-14   # Apple Silicon ランナー
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
@@ -81,77 +86,91 @@ jobs:
           fi
           ls -la dist
 
-      - name: Rename artifact (AppleSilicon)
+      - name: Rename .app (AppleSilicon)
         run: |
           mv "dist/${APP_NAME}.app" "dist/${APP_NAME}-AppleSilicon.app"
+
+      - name: Zip .app (AppleSilicon)
+        run: |
+          cd dist
+          zip -qry "${APP_NAME}-AppleSilicon.app.zip" "${APP_NAME}-AppleSilicon.app"
 
       - uses: actions/upload-artifact@v4
         with:
           name: app-arm
-          path: dist/${{ env.APP_NAME }}-AppleSilicon.app
+          path: dist/${{ env.APP_NAME }}-AppleSilicon.app.zip
 
-  # 3) 両 .app を1つのDMGに梱包
+  # 3) 両 .app を1つの DMG に梱包
   package-universal-dmg:
     runs-on: macos-14
     needs: [build-intel, build-arm]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Intel app
+      - name: Download Intel app zip
         uses: actions/download-artifact@v4
         with:
           name: app-intel
-          path: bundle
+          path: bundle/intel
 
-      - name: Download AppleSilicon app
+      - name: Download AppleSilicon app zip
         uses: actions/download-artifact@v4
         with:
           name: app-arm
-          path: bundle
+          path: bundle/arm
 
-      - name: Prepare bundle contents
+      - name: Unzip apps & normalize
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
         run: |
-          set -e
+          set -euxo pipefail
+          ls -R bundle || true
+
+          # 解凍
+          unzip -q "bundle/intel/${APP_NAME}-Intel.app.zip" -d bundle
+          unzip -q "bundle/arm/${APP_NAME}-AppleSilicon.app.zip" -d bundle
+
+          # 結果確認
+          test -d "bundle/${APP_NAME}-Intel.app"
+          test -d "bundle/${APP_NAME}-AppleSilicon.app"
+          echo "=== Tree after unzip ==="
+          find bundle -maxdepth 2 -print
+
+      - name: Prepare bundle contents (launcher & README)
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
+        run: |
+          set -euxo pipefail
           cd bundle
 
-          # 起動ランチャー（機種自動判別）
-          cat > "Start ${APP_NAME}.command" <<'SH'
+          # 起動ランチャー
+          cat > "Start ${APP_NAME}.command" <<SH
           #!/bin/bash
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          ARCH="$(uname -m)"
-          if [ "$ARCH" = "arm64" ]; then
-            open "$DIR/'${APP_NAME}-AppleSilicon.app'"
+          DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+          ARCH="\$(uname -m)"
+          if [ "\$ARCH" = "arm64" ]; then
+            open "\$DIR/${APP_NAME}-AppleSilicon.app"
           else
-            open "$DIR/'${APP_NAME}-Intel.app'"
+            open "\$DIR/${APP_NAME}-Intel.app"
           fi
           SH
           chmod +x "Start ${APP_NAME}.command"
 
-          # README（Gatekeeper案内・権限など）
+          # README
           cat > "README.txt" <<TXT
           【${APP_NAME} の起動方法（署名・公証なし配布）】
 
-          1) ${APP_NAME}-Intel.app と ${APP_NAME}-AppleSilicon.app どちらも同梱されています。
-             - Apple シリコン(M1/M2/M3...) の場合: AppleSilicon 版
-             - Intel の場合: Intel 版
-             わからない場合は「Start ${APP_NAME}.command」をダブルクリックしてください。
+          1) Apple シリコン: ${APP_NAME}-AppleSilicon.app
+             Intel: ${APP_NAME}-Intel.app
+             不明な場合は「Start ${APP_NAME}.command」を実行。
 
-          2) macOS の Gatekeeper により、初回は警告が表示されることがあります。
-             - Finderで .app を「右クリック → 開く」→ ダイアログの「開く」
-             - または「設定 → プライバシーとセキュリティ」下部の「このまま開く」
+          2) 初回の Gatekeeper:
+             - Finder で .app を右クリック→「開く」→「開く」
+             - もしくは 設定 > プライバシーとセキュリティ > 「このまま開く」
 
-          3) （必要に応じて）
-             - PyAutoGUI等を使用する場合は「設定 → プライバシーとセキュリティ」で
-               アクセシビリティ/画面収録の権限を付与してください。
-             - Selenium/DrissionPage を使う場合、Google Chrome のインストールが必要です。
-
-          4) うまく起動しない場合
-             - ターミナルで隔離属性を外す（自己責任）:
-               xattr -dr com.apple.quarantine "/Applications/${APP_NAME}-Intel.app"
-               xattr -dr com.apple.quarantine "/Applications/${APP_NAME}-AppleSilicon.app"
-
+          3) PyAutoGUI 等を使う場合は、設定 > プライバシーとセキュリティ で
+             アクセシビリティ/画面収録の権限を付与してください。
           TXT
-
           cd ..
 
       - name: Install create-dmg
@@ -159,26 +178,51 @@ jobs:
           brew install create-dmg || true
 
       - name: Make Universal DMG
+        env:
+          APP_NAME: ${{ env.APP_NAME }}
         run: |
-          set -e
+          set -euxo pipefail
           mkdir -p dist
-          BG_ARG=""
-          if [ -f "packaging/dmg-background.png" ]; then
-            BG_ARG="--background 'packaging/dmg-background.png'"
-          fi
+          OUT="dist/${APP_NAME}-Universal.dmg"
 
-          # アイコン配置（お好みでXYを調整）
-          create-dmg --overwrite \
-            --volname "${APP_NAME}" \
-            $BG_ARG \
-            --window-pos 200 120 --window-size 720 440 \
-            --icon "${APP_NAME}-Intel.app" 140 170 \
-            --icon "${APP_NAME}-AppleSilicon.app" 320 170 \
-            --icon "Start ${APP_NAME}.command" 500 170 \
-            --app-drop-link 600 170 \
-            "dist/${APP_NAME}-Universal.dmg" "bundle"
+          echo "== create-dmg version =="
+          create-dmg --version || true
+          create-dmg --help | head -n 20 || true
+
+          # 既存 DMG を削除（--overwrite は使わない）
+          rm -f "$OUT"
+
+          # 背景あり/なしで作成（失敗時は hdiutil にフォールバック）
+          if [ -f "packaging/dmg-background.png" ]; then
+            if ! create-dmg \
+              --volname "${APP_NAME}" \
+              --window-pos 200 120 --window-size 720 440 \
+              --icon "${APP_NAME}-Intel.app" 140 170 \
+              --icon "${APP_NAME}-AppleSilicon.app" 320 170 \
+              --icon "Start ${APP_NAME}.command" 500 170 \
+              --app-drop-link 600 170 \
+              --background "packaging/dmg-background.png" \
+              "$OUT" "bundle"
+            then
+              echo "create-dmg failed -> fallback to hdiutil (no layout)"
+              hdiutil create -volname "${APP_NAME}" -srcfolder "bundle" -ov -format UDZO "$OUT"
+            fi
+          else
+            if ! create-dmg \
+              --volname "${APP_NAME}" \
+              --window-pos 200 120 --window-size 720 440 \
+              --icon "${APP_NAME}-Intel.app" 140 170 \
+              --icon "${APP_NAME}-AppleSilicon.app" 320 170 \
+              --icon "Start ${APP_NAME}.command" 500 170 \
+              --app-drop-link 600 170 \
+              "$OUT" "bundle"
+            then
+              echo "create-dmg failed -> fallback to hdiutil (no layout)"
+              hdiutil create -volname "${APP_NAME}" -srcfolder "bundle" -ov -format UDZO "$OUT"
+            fi
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${ { env.APP_NAME } }-Universal-DMG
+          name: ${{ env.APP_NAME }}-Universal-DMG
           path: dist/${{ env.APP_NAME }}-Universal.dmg

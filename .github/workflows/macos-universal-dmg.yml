@@ -40,6 +40,7 @@ jobs:
               $ICON_ARG \
               --hidden-import DrissionPage \
               --hidden-import selenium \
+              --hidden-import webdriver_manager \
               "${ENTRYPOINT}"
           fi
           ls -la dist

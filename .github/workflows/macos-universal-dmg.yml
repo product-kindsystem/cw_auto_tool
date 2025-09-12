@@ -41,6 +41,7 @@ jobs:
               --hidden-import DrissionPage \
               --hidden-import selenium \
               --hidden-import webdriver_manager \
+              --hidden-import pandas \
               "${ENTRYPOINT}"
           fi
           ls -la dist

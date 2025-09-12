@@ -20,8 +20,16 @@ from web_driver_ex import WebDriverEx
 from selenium.webdriver.common.by import By
 from input_xlsx import get_input_json
 
+import os
+import traceback
+import atexit
+import signal
+import faulthandler
+import uuid
+
+
 # デバッグ用
-DEBUG_MODE = False
+DEBUG_MODE = True
 DEBUG_LIST_COUNT = 3
 DEBUG_PAGE_COUNT = 1
 DEBUG_SKIP_AUTO_POST = False
@@ -33,6 +41,136 @@ NOT_FOUND_DELETE_DAYS = 7
 VPN_SKIP = True
 MAC_APP_NAME = "cwtool"
 
+RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{os.getpid()}"
+G_LOG_DIR = None
+
+
+def setup_diagnostics(logger, log_dir_path: Path):
+    """環境情報・グローバルハンドラ・faulthandlerを登録"""
+    global G_LOG_DIR
+    G_LOG_DIR = Path(log_dir_path)
+    G_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"[ENV] run_id={RUN_ID}")
+    logger.info(f"[ENV] python={sys.version}")
+    logger.info(f"[ENV] platform={platform.platform()} machine={platform.machine()}")
+    logger.info(f"[ENV] argv={sys.argv}")
+    logger.info(f"[ENV] cwd={os.getcwd()}")
+
+    # faulthandler -> ファイル
+    try:
+        fh_path = G_LOG_DIR / f"faulthandler_{RUN_ID}.log"
+        fh_fp = open(fh_path, "w", encoding="utf-8")
+        faulthandler.enable(fh_fp)
+        logger.info(f"[ENV] faulthandler -> {fh_path}")
+    except Exception as e:
+        logger.warning(f"[ENV] faulthandler.enable failed: {e}")
+
+    # 未捕捉例外
+    def _excepthook(exctype, value, tb):
+        try:
+            msg = "".join(traceback.format_exception(exctype, value, tb))
+            logger.error("[UNCAUGHT]\n" + msg)
+        finally:
+            # 最後の状態をダンプ
+            # driver/page が見えないスコープでも、後述の dump_* を呼び出すだけでOK
+            pass
+    sys.excepthook = _excepthook
+
+    # シグナル
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, lambda s, f: logger.error(f"[SIGNAL] {s} received (run_id={RUN_ID})"))
+        except Exception:
+            pass
+
+    atexit.register(lambda: logger.info("[EXIT] process exiting"))
+
+
+def dump_driver_state(logger, driver, label: str):
+    """Selenium(WebDriverEx) の現在状態をログ＋ファイル保存"""
+    if driver is None:
+        logger.error(f"[SNAPSHOT:{label}] driver is None")
+        return
+    # WebDriverEx 内部の生driverを取得
+    raw = getattr(driver, "driver", driver)
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = f"{label}_{ts}"
+        # handles / url / title
+        try:
+            handles = raw.window_handles
+            cur = None
+            try:
+                cur = raw.current_window_handle
+            except Exception:
+                pass
+            logger.error(f"[SNAPSHOT:{label}] handles={handles} current={cur}")
+            logger.error(f"[SNAPSHOT:{label}] url={getattr(raw, 'current_url', 'n/a')} title={getattr(raw, 'title', 'n/a')}")
+        except Exception as e:
+            logger.error(f"[SNAPSHOT:{label}] window info failed: {e}")
+
+        # screenshot
+        try:
+            png = G_LOG_DIR / f"{base}.png"
+            raw.save_screenshot(str(png))
+            logger.error(f"[SNAPSHOT:{label}] screenshot -> {png.name}")
+        except Exception as e:
+            logger.error(f"[SNAPSHOT:{label}] screenshot failed: {e}")
+
+        # html
+        try:
+            html = G_LOG_DIR / f"{base}.html"
+            with open(html, "w", encoding="utf-8") as f:
+                f.write(raw.page_source or "")
+            logger.error(f"[SNAPSHOT:{label}] html -> {html.name}")
+        except Exception as e:
+            logger.error(f"[SNAPSHOT:{label}] html failed: {e}")
+
+        # urlだけのテキスト
+        try:
+            urlfile = G_LOG_DIR / f"{base}.url.txt"
+            with open(urlfile, "w", encoding="utf-8") as f:
+                f.write(getattr(raw, "current_url", ""))
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"[SNAPSHOT:{label}] dump failed: {e}")
+
+
+def dump_page_state(logger, page, label: str):
+    """DrissionPage 側の簡易ダンプ"""
+    if page is None:
+        logger.error(f"[SNAPSHOT:{label}] page is None")
+        return
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = f"{label}_page_{ts}"
+        info = G_LOG_DIR / f"{base}.txt"
+        with open(info, "w", encoding="utf-8") as f:
+            f.write(f"url: {getattr(page, 'url', 'n/a')}\n")
+        html = G_LOG_DIR / f"{base}.html"
+        try:
+            with open(html, "w", encoding="utf-8") as f:
+                f.write(getattr(page, "html", "") or "")
+        except Exception:
+            pass
+        logger.error(f"[SNAPSHOT:{label}] page -> {info.name} / {html.name}")
+    except Exception as e:
+        logger.error(f"[SNAPSHOT:{label}] page dump failed: {e}")
+
+
+def log_ex(logger, driver, page, label: str, exc: Exception):
+    """例外を必ず詳細＋スナップショット付きで記録"""
+    logger.error(f"[Exception] {label} : {exc}\n" + traceback.format_exc())
+    try:
+        dump_driver_state(logger, driver, label)
+    except Exception:
+        pass
+    try:
+        dump_page_state(logger, page, label)
+    except Exception:
+        pass
 
 def main():
 
@@ -61,6 +199,7 @@ def main():
 
     # Logger初期化
     logger = log.textlog(log_base_dir_path, "croudworks")
+    setup_diagnostics(logger, log_base_dir_path)
     logger.info(f"--------------------------------------------------------------------------")
     logger.info(f"Main CrowdWorks Application Start ({VERSION})")
 
@@ -626,7 +765,7 @@ def main():
         # ■■■■■■■■■■■■■■■■■■■■■■■■■■ 自動返信処理 終了 ■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■
 
     except Exception as e:
-        logger.error(f'[Main Func Exception] Error : {e}')
+        log_ex(logger, driver, page, "Main Func Exception", e)
     
 
     # ログアウト
@@ -718,14 +857,17 @@ def start_page_and_driver(init_url, setting_dic, logger):
             page = ChromiumPage(addr_or_opts=co)
             page.get(init_url)
             logger.info("ChromiumPage 起動")
+            logger.info(f"ChromiumPage url={getattr(page, 'url', 'n/a')}")
         except Exception as e:
-            logger.error(f"ChromiumPage 起動失敗: {e}")
+            logger.error(f"ChromiumPage 起動失敗: {e}\n" + traceback.format_exc())
+            # DrissionPageのみダンプ
+            dump_page_state(logger, locals().get("page"), "ChromiumPage起動失敗")
             return False, None, None, None
     else:
-        # Chrome実行（Cloudflare Bot対策回避用）
         page = ChromiumPage()
         page.get(init_url)
         logger.info(f"ChromiumPage 起動")
+        logger.info(f"ChromiumPage url={getattr(page, 'url', 'n/a')}")
 
     try:
         driver = WebDriverEx(setting_dic, logger)
@@ -733,9 +875,16 @@ def start_page_and_driver(init_url, setting_dic, logger):
         logger.info("WebDriverEx 起動")
         driver.get(init_url)
         sleep(3)
+        # 起動直後の状態
+        try:
+            raw = getattr(driver, "driver", driver)
+            logger.info(f"[DRIVER] handles={raw.window_handles} current={getattr(raw,'current_window_handle', None)}")
+            logger.info(f"[DRIVER] url={getattr(raw,'current_url','n/a')} title={getattr(raw,'title','n/a')}")
+        except Exception:
+            pass
         return True, page, driver, actions
     except Exception as e:
-        logger.error(f"WebDriverEx 起動失敗: {e}")
+        log_ex(logger, locals().get("driver"), page, "WebDriverEx 起動失敗", e)
         try:
             page.quit()
         except Exception:
@@ -746,17 +895,23 @@ def start_page_and_driver(init_url, setting_dic, logger):
 def finish_page_and_driver(page, driver, logger):
     if driver is not None:
         try:
+            try:
+                raw = getattr(driver, "driver", driver)
+                logger.info(f"[DRIVER-END] handles={getattr(raw,'window_handles',[])} url={getattr(raw,'current_url','n/a')}")
+            except Exception:
+                pass
             driver.finalize()
-            driver = None
-            logger.info(f'driver終了')
+            logger.info('driver終了')
         except Exception as e:
-            logger.error(f'[DriverFinishException] Error : {e}')
+            logger.error(f'[DriverFinishException] Error : {e}\n' + traceback.format_exc())
     if page is not None:
         try:
+            logger.info(f"[PAGE-END] url={getattr(page,'url','n/a')}")
             page.quit()
-            logger.info(f'DrissionPage終了')
+            logger.info('DrissionPage終了')
         except Exception as e:
-            logger.error(f'[DrissionPageFinishException] Error : {e}')
+            logger.error(f'[DrissionPageFinishException] Error : {e}\n' + traceback.format_exc())
+
 
 
 if __name__ == "__main__":

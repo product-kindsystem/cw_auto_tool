@@ -142,6 +142,10 @@ class WebDriverEx:
     def page_source(self):
         return self.driver.page_source
 
+    @property
+    def window_handles(self):
+        return self.driver.window_handles
+
     def switch_last_opened_tab(self):
         self.driver.switch_to.window(self.driver.window_handles[-1])
 

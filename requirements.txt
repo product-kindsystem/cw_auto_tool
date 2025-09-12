@@ -2,3 +2,6 @@ selenium
 DrissionPage
 webdriver_manager
 pandas
+numpy
+dateutil
+pytz

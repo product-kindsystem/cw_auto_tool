@@ -86,13 +86,14 @@ class WebDriverEx:
         self.finalize()
 
     def finalize(self):
-        handle_count = len(self.driver.window_handles)
-        while handle_count > 0:
-            self.driver.switch_to.window(self.driver.window_handles[0])
-            self.driver.close()
-            handle_count -= 1
-        self.driver.quit()
-        self.driver = None
+        if self.driver:
+            handle_count = len(self.driver.window_handles)
+            while handle_count > 0:
+                self.driver.switch_to.window(self.driver.window_handles[0])
+                self.driver.close()
+                handle_count -= 1
+            self.driver.quit()
+            self.driver = None
 
     def back(self):
         self.driver.back()

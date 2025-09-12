@@ -35,4 +35,4 @@ def mac_app_base_dir() -> Path:
 
 def mac_user_data_dir(mac_app_name) -> Path:
     # macOS のユーザ書き込み領域
-    return Path.home() / "Library" / "Application Support" / mac_app_name
+    return Path.home() / "Documents" / mac_app_name

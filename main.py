@@ -178,10 +178,15 @@ def main():
     if fm.is_mac_os():
         print("macOSです。アーキ:", fm.mac_arch(), " Rosetta:", fm.mac_is_rosetta2())
         APP_DIR = fm.mac_app_base_dir()
+        print(f"APP_DIR : {APP_DIR}")
         DATA_DIR = fm.mac_user_data_dir(MAC_APP_NAME)
+        print(f"DATA_DIR : {DATA_DIR}")
         LOG_DIR = DATA_DIR / "log"
+        print(f"LOG_DIR : {LOG_DIR}")
         DATA_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"DATA_DIR.mkdir")
         LOG_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"LOG_DIR.mkdir")
         BASE_DIR_PATH = APP_DIR
         log_base_dir_path = LOG_DIR
         user_input = DATA_DIR / "input.xlsx"  # 利用者が差し替える置き場
@@ -906,7 +911,7 @@ def finish_page_and_driver(page, driver, logger):
             logger.error(f'[DriverFinishException] Error : {e}\n' + traceback.format_exc())
     if page is not None:
         try:
-            logger.info(f"[PAGE-END] url={getattr(page,'url','n/a')}")
+            # logger.info(f"[PAGE-END] url={getattr(page,'url','n/a')}")
             page.quit()
             logger.info('DrissionPage終了')
         except Exception as e:

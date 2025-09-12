@@ -3,5 +3,5 @@ DrissionPage
 webdriver_manager
 pandas
 numpy
-dateutil
+python-dateutil
 pytz

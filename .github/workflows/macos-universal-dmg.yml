@@ -42,6 +42,9 @@ jobs:
               --hidden-import selenium \
               --hidden-import webdriver_manager \
               --hidden-import pandas \
+              --hidden-import numpy \
+              --hidden-import dateutil \
+              --hidden-import pytz \
               "${ENTRYPOINT}"
           fi
           ls -la dist

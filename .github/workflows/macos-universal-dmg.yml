@@ -43,7 +43,7 @@ jobs:
               --hidden-import webdriver_manager \
               --hidden-import pandas \
               --hidden-import numpy \
-              --hidden-import dateutil \
+              --hidden-import python-dateutil \
               --hidden-import pytz \
               "${ENTRYPOINT}"
           fi

@@ -30,6 +30,13 @@ class WebDriverEx:
             self.options.add_argument('--headless')
         self.path = ChromeDriverManager().install()
 
+        # THIRD_PARTY_NOTICES.chromedriverとなってしまう件の対処（webdriver_manager updateにより不要になる可能性あり）
+        #  C:\\Users\\kashi\\.wdm\\drivers\\chromedriver\\win64\\127.0.6533.72\\chromedriver-win32/THIRD_PARTY_NOTICES.chromedriver
+        if not fm.is_mac_os():
+            if os.path.splitext(self.path)[1] != '.exe':
+                webdriver_dir_path = os.path.dirname(self.path)
+                self.path = os.path.join(webdriver_dir_path, 'chromedriver.exe')
+
         # Serviceオブジェクトを使用してexecutable_pathを指定
         service = Service(executable_path=self.path)
 
@@ -37,6 +44,34 @@ class WebDriverEx:
         self.driver = webdriver.Chrome(service=service, options=self.options)
         self.driverwait = WebDriverWait(self.driver, self.setting["WAIT_TIME_SEC"])
         self.driver.implicitly_wait(1)
+        # self.restart()
+        # self.get("https://www.google.com/")
+
+        # options = Options()
+        # options.add_argument(
+        #     '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36')
+        # options.add_argument('--lang=ja')
+        # options.add_argument('--incognito')
+        # options.add_argument("--start-maximized")
+        # options.add_argument("--start-minimized")
+        # options.add_argument("--kiosk-printing")  # 無条件で印刷ボタンを押すらしい
+        # options.add_argument("start-fullscreen")
+        # if hidechrome == True:
+        #     options.add_argument('--headless')
+
+        # self.driver = webdriver.Chrome(
+        #     ChromeDriverManager().install(), chrome_options=options)
+        # self.driverwait = WebDriverWait(self.driver, wait_time)
+        # self.driver.minimize_window()
+        # maxSize = self.driver.get_window_size()
+        # maxPos = self.driver.get_window_position()
+        # self.driver.set_window_size(maxSize['width'] * 3 / 4, maxSize['height'])
+        # self.driver.set_window_position(maxPos['x'], maxPos['y'])
+
+        # self.driver.set_window_size(0, 0)
+        # self.driver.set_window_position(0, 0)
+        # self.defaultPos = self.driver.get_window_position()
+        # self.defaultSize = self.driver.get_window_size()
 
     def restart(self):
         if self.driver != None:

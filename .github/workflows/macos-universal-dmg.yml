@@ -6,9 +6,9 @@ on:
     tags: ["v*"]
 
 env:
-  APP_NAME: "MyApp"                       # 変更可: アプリ名
+  APP_NAME: "cwtool"                      # 変更可: アプリ名
   ENTRYPOINT: "main.py"                   # 変更可: エントリポイント
-  BUNDLE_ID: "com.example.myapp"          # 変更可: バンドルID
+  BUNDLE_ID: "com.example.cwtool"         # 変更可: バンドルID
   ICON_PATH: "assets/app.icns"            # 任意: 無ければ自動スキップ
 
 jobs:

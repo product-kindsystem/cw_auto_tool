@@ -352,6 +352,8 @@ def main():
             # 依頼形式入力
             try:
                 el = driver.find_element(By.ID, "job_offer_type_project")  # "プロジェクト形式"
+                scroll_into_view_above(driver, el, base_offset=150, jitter=50)
+                sleep_random()
                 el.click()
                 sleep_random()
                 logger.info(f'依頼形式 入力 OK : プロジェクト形式')

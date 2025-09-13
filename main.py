@@ -7,10 +7,8 @@ from DrissionPage import ChromiumPage, ChromiumOptions
 import last_checked_json
 from pathlib import Path
 import textlog as log
-import openvpn as vpn
 import func_mac as fm
 import func_chrome as fc
-import func_crowdworks as fcw
 import last_checked_json
 from time import sleep
 from selenium.webdriver.common.action_chains import ActionChains
@@ -25,152 +23,16 @@ import traceback
 import atexit
 import signal
 import faulthandler
-import uuid
 
-
-# デバッグ用
-DEBUG_MODE = True
-DEBUG_LIST_COUNT = 3
-DEBUG_PAGE_COUNT = 1
-DEBUG_SKIP_AUTO_POST = False
-MAX_CHECK_DAY_COUNT = 15
 
 # システム定義
 VERSION = "V.1.0.0"
-NOT_FOUND_DELETE_DAYS = 7
-VPN_SKIP = True
+MAX_CHECK_DAY_COUNT = 15
 MAC_APP_NAME = "cwtool"
 
 RUN_ID = datetime.now().strftime("%Y%m%d_%H%M%S") + f"_{os.getpid()}"
 G_LOG_DIR = None
 
-
-def setup_diagnostics(logger, log_dir_path: Path):
-    """環境情報・グローバルハンドラ・faulthandlerを登録"""
-    global G_LOG_DIR
-    G_LOG_DIR = Path(log_dir_path)
-    G_LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    logger.info(f"[ENV] run_id={RUN_ID}")
-    logger.info(f"[ENV] python={sys.version}")
-    logger.info(f"[ENV] platform={platform.platform()} machine={platform.machine()}")
-    logger.info(f"[ENV] argv={sys.argv}")
-    logger.info(f"[ENV] cwd={os.getcwd()}")
-
-    # faulthandler -> ファイル
-    try:
-        fh_path = G_LOG_DIR / f"faulthandler_{RUN_ID}.log"
-        fh_fp = open(fh_path, "w", encoding="utf-8")
-        faulthandler.enable(fh_fp)
-        logger.info(f"[ENV] faulthandler -> {fh_path}")
-    except Exception as e:
-        logger.warning(f"[ENV] faulthandler.enable failed: {e}")
-
-    # 未捕捉例外
-    def _excepthook(exctype, value, tb):
-        try:
-            msg = "".join(traceback.format_exception(exctype, value, tb))
-            logger.error("[UNCAUGHT]\n" + msg)
-        finally:
-            # 最後の状態をダンプ
-            # driver/page が見えないスコープでも、後述の dump_* を呼び出すだけでOK
-            pass
-    sys.excepthook = _excepthook
-
-    # シグナル
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            signal.signal(sig, lambda s, f: logger.error(f"[SIGNAL] {s} received (run_id={RUN_ID})"))
-        except Exception:
-            pass
-
-    atexit.register(lambda: logger.info("[EXIT] process exiting"))
-
-
-def dump_driver_state(logger, driver, label: str):
-    """Selenium(WebDriverEx) の現在状態をログ＋ファイル保存"""
-    if driver is None:
-        logger.error(f"[SNAPSHOT:{label}] driver is None")
-        return
-    # WebDriverEx 内部の生driverを取得
-    raw = getattr(driver, "driver", driver)
-    try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        base = f"{label}_{ts}"
-        # handles / url / title
-        try:
-            handles = raw.window_handles
-            cur = None
-            try:
-                cur = raw.current_window_handle
-            except Exception:
-                pass
-            logger.error(f"[SNAPSHOT:{label}] handles={handles} current={cur}")
-            logger.error(f"[SNAPSHOT:{label}] url={getattr(raw, 'current_url', 'n/a')} title={getattr(raw, 'title', 'n/a')}")
-        except Exception as e:
-            logger.error(f"[SNAPSHOT:{label}] window info failed: {e}")
-
-        # screenshot
-        try:
-            png = G_LOG_DIR / f"{base}.png"
-            raw.save_screenshot(str(png))
-            logger.error(f"[SNAPSHOT:{label}] screenshot -> {png.name}")
-        except Exception as e:
-            logger.error(f"[SNAPSHOT:{label}] screenshot failed: {e}")
-
-        # html
-        try:
-            html = G_LOG_DIR / f"{base}.html"
-            with open(html, "w", encoding="utf-8") as f:
-                f.write(raw.page_source or "")
-            logger.error(f"[SNAPSHOT:{label}] html -> {html.name}")
-        except Exception as e:
-            logger.error(f"[SNAPSHOT:{label}] html failed: {e}")
-
-        # urlだけのテキスト
-        try:
-            urlfile = G_LOG_DIR / f"{base}.url.txt"
-            with open(urlfile, "w", encoding="utf-8") as f:
-                f.write(getattr(raw, "current_url", ""))
-        except Exception:
-            pass
-    except Exception as e:
-        logger.error(f"[SNAPSHOT:{label}] dump failed: {e}")
-
-
-def dump_page_state(logger, page, label: str):
-    """DrissionPage 側の簡易ダンプ"""
-    if page is None:
-        logger.error(f"[SNAPSHOT:{label}] page is None")
-        return
-    try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        base = f"{label}_page_{ts}"
-        info = G_LOG_DIR / f"{base}.txt"
-        with open(info, "w", encoding="utf-8") as f:
-            f.write(f"url: {getattr(page, 'url', 'n/a')}\n")
-        html = G_LOG_DIR / f"{base}.html"
-        try:
-            with open(html, "w", encoding="utf-8") as f:
-                f.write(getattr(page, "html", "") or "")
-        except Exception:
-            pass
-        logger.error(f"[SNAPSHOT:{label}] page -> {info.name} / {html.name}")
-    except Exception as e:
-        logger.error(f"[SNAPSHOT:{label}] page dump failed: {e}")
-
-
-def log_ex(logger, driver, page, label: str, exc: Exception):
-    """例外を必ず詳細＋スナップショット付きで記録"""
-    logger.error(f"[Exception] {label} : {exc}\n" + traceback.format_exc())
-    try:
-        dump_driver_state(logger, driver, label)
-    except Exception:
-        pass
-    try:
-        dump_page_state(logger, page, label)
-    except Exception:
-        pass
 
 def main():
 
@@ -215,14 +77,9 @@ def main():
         normalize_checkbox=True,
         exec_only=True,
     )
-    openvpn = vpn.openvpn(logger, VPN_SKIP)
     settings = input["settings"]
-    wait_time_sec, max_wait_time_sec = settings['WAIT_TIME_SEC'], settings['MAX_WAIT_TIME_SEC']
+    DEBUG_MODE, wait_time_sec, max_wait_time_sec = settings['DEBUG_MODE'] == "True", settings['WAIT_TIME_SEC'], settings['MAX_WAIT_TIME_SEC']
     logger.info(f"LoadSetting [wait_time_sec] {wait_time_sec} [max_wait_time_sec] {max_wait_time_sec}")
-
-    # 定数定義
-    now = datetime.now()
-    today_str = f"{now.year}年{now.month}月{now.day}日"  # => 2021年1月23日
 
     # Chrome準備
     # 実行中Chrome終了＝＞デバッグChrome起動（ChromiumPage用）=>Chrome終了
@@ -232,26 +89,21 @@ def main():
     page, driver, actions = None, None, None
     try:
         # ブラウザ、VPN再起動
-        try_driver_vpn_start_count = 0
-        while try_driver_vpn_start_count < 10:
+        try_driver_start_count = 0
+        while try_driver_start_count < 10:
             try:
-                try_driver_vpn_start_count += 1
+                try_driver_start_count += 1
                 finish_page_and_driver(page, driver, logger)
-                # success = openvpn.restart()
-                success = True
+                cw_login_url = "https://crowdworks.jp/login"
+                success, page, driver, actions = start_page_and_driver(cw_login_url, settings, logger)
                 if success:
-                    cw_login_url = fcw.get_crowdworks_login_url()
-                    success, page, driver, actions = start_page_and_driver(cw_login_url, settings, logger)
-                    if success:
-                        logger.info(f'try_driver_vpn_start {try_driver_vpn_start_count} : success')
-                        break
-                    else:
-                        logger.info(f'try_driver_vpn_start {try_driver_vpn_start_count} : start_page_and_driver failure')
+                    logger.info(f'try_driver_start {try_driver_start_count} : success')
+                    break
                 else:
-                    logger.info(f'try_driver_vpn_start {try_driver_vpn_start_count} : openvpn.restart failure')
+                    logger.info(f'try_driver_start {try_driver_start_count} : start_page_and_driver failure')
                 sleep(5)
             except Exception as e:
-                logger.info(f'try_driver_vpn_start {try_driver_vpn_start_count} Exception : {e}')
+                logger.info(f'try_driver_start {try_driver_start_count} Exception : {e}')
 
         # スクレイピング 開始
         logger.info(f'===== Start scraping =====')
@@ -288,9 +140,6 @@ def main():
         total_count, success_count = 0, 0
         for auto_post in input["auto_posts"]:
 
-            if DEBUG_SKIP_AUTO_POST:
-                break
-
             total_count += 1
             logger.info(f'---------------------------------------------------------------------------------------')
             logger.info(f'処理開始 : {total_count}掲載目')
@@ -314,8 +163,6 @@ def main():
                     logger.info(f'募集ページの作り方ダイアログを閉じる OK')
             except Exception as e:
                 pass
-                # logger.info(f'募集ページの作り方ダイアログを閉じる NG')
-                # logger.error(f'[Exception] 募集ページの作り方ダイアログを閉じる エラー : {e}')
 
             # すべてのカテゴリから選ぶ
             try:
@@ -797,11 +644,137 @@ def main():
     logger.info('')  # ログ見やすく改行
 
     finish_page_and_driver(page, driver, logger)
-    del openvpn
 
     logger.info("Application End")
     del logger
 
+
+def setup_diagnostics(logger, log_dir_path: Path):
+    """環境情報・グローバルハンドラ・faulthandlerを登録"""
+    global G_LOG_DIR
+    G_LOG_DIR = Path(log_dir_path)
+    G_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"[ENV] run_id={RUN_ID}")
+    logger.info(f"[ENV] python={sys.version}")
+    logger.info(f"[ENV] platform={platform.platform()} machine={platform.machine()}")
+    logger.info(f"[ENV] argv={sys.argv}")
+    logger.info(f"[ENV] cwd={os.getcwd()}")
+
+    # faulthandler -> ファイル
+    try:
+        fh_path = G_LOG_DIR / f"faulthandler_{RUN_ID}.log"
+        fh_fp = open(fh_path, "w", encoding="utf-8")
+        faulthandler.enable(fh_fp)
+        logger.info(f"[ENV] faulthandler -> {fh_path}")
+    except Exception as e:
+        logger.warning(f"[ENV] faulthandler.enable failed: {e}")
+
+    # 未捕捉例外
+    def _excepthook(exctype, value, tb):
+        try:
+            msg = "".join(traceback.format_exception(exctype, value, tb))
+            logger.error("[UNCAUGHT]\n" + msg)
+        finally:
+            # 最後の状態をダンプ
+            # driver/page が見えないスコープでも、後述の dump_* を呼び出すだけでOK
+            pass
+    sys.excepthook = _excepthook
+
+    # シグナル
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, lambda s, f: logger.error(f"[SIGNAL] {s} received (run_id={RUN_ID})"))
+        except Exception:
+            pass
+
+    atexit.register(lambda: logger.info("[EXIT] process exiting"))
+
+
+def dump_driver_state(logger, driver, label: str):
+    """Selenium(WebDriverEx) の現在状態をログ＋ファイル保存"""
+    if driver is None:
+        logger.error(f"[SNAPSHOT:{label}] driver is None")
+        return
+    # WebDriverEx 内部の生driverを取得
+    raw = getattr(driver, "driver", driver)
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = f"{label}_{ts}"
+        # handles / url / title
+        try:
+            handles = raw.window_handles
+            cur = None
+            try:
+                cur = raw.current_window_handle
+            except Exception:
+                pass
+            logger.error(f"[SNAPSHOT:{label}] handles={handles} current={cur}")
+            logger.error(f"[SNAPSHOT:{label}] url={getattr(raw, 'current_url', 'n/a')} title={getattr(raw, 'title', 'n/a')}")
+        except Exception as e:
+            logger.error(f"[SNAPSHOT:{label}] window info failed: {e}")
+
+        # screenshot
+        try:
+            png = G_LOG_DIR / f"{base}.png"
+            raw.save_screenshot(str(png))
+            logger.error(f"[SNAPSHOT:{label}] screenshot -> {png.name}")
+        except Exception as e:
+            logger.error(f"[SNAPSHOT:{label}] screenshot failed: {e}")
+
+        # html
+        try:
+            html = G_LOG_DIR / f"{base}.html"
+            with open(html, "w", encoding="utf-8") as f:
+                f.write(raw.page_source or "")
+            logger.error(f"[SNAPSHOT:{label}] html -> {html.name}")
+        except Exception as e:
+            logger.error(f"[SNAPSHOT:{label}] html failed: {e}")
+
+        # urlだけのテキスト
+        try:
+            urlfile = G_LOG_DIR / f"{base}.url.txt"
+            with open(urlfile, "w", encoding="utf-8") as f:
+                f.write(getattr(raw, "current_url", ""))
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"[SNAPSHOT:{label}] dump failed: {e}")
+
+
+def dump_page_state(logger, page, label: str):
+    """DrissionPage 側の簡易ダンプ"""
+    if page is None:
+        logger.error(f"[SNAPSHOT:{label}] page is None")
+        return
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        base = f"{label}_page_{ts}"
+        info = G_LOG_DIR / f"{base}.txt"
+        with open(info, "w", encoding="utf-8") as f:
+            f.write(f"url: {getattr(page, 'url', 'n/a')}\n")
+        html = G_LOG_DIR / f"{base}.html"
+        try:
+            with open(html, "w", encoding="utf-8") as f:
+                f.write(getattr(page, "html", "") or "")
+        except Exception:
+            pass
+        logger.error(f"[SNAPSHOT:{label}] page -> {info.name} / {html.name}")
+    except Exception as e:
+        logger.error(f"[SNAPSHOT:{label}] page dump failed: {e}")
+
+
+def log_ex(logger, driver, page, label: str, exc: Exception):
+    """例外を必ず詳細＋スナップショット付きで記録"""
+    logger.error(f"[Exception] {label} : {exc}\n" + traceback.format_exc())
+    try:
+        dump_driver_state(logger, driver, label)
+    except Exception:
+        pass
+    try:
+        dump_page_state(logger, page, label)
+    except Exception:
+        pass
 
 def sleep_random(a=0.3, b=0.7):
     time.sleep(random.uniform(a, b))
@@ -844,13 +817,7 @@ def scroll_into_view_above(driver, el, base_offset=140, jitter=40):
 
 
 def isRecaptchaPage(page):
-    if "recaptcha" in page.url:
-        return True
-    # if "Additional Verification Required" in page.html:
-    #     return True
-    # if "人間であることを確認します" in page.html:
-    #     return True
-    return False
+    return "recaptcha" in page.url
 
 
 def start_page_and_driver(init_url, setting_dic, logger):
@@ -913,7 +880,6 @@ def finish_page_and_driver(page, driver, logger):
             logger.error(f'[DriverFinishException] Error : {e}\n' + traceback.format_exc())
     if page is not None:
         try:
-            # logger.info(f"[PAGE-END] url={getattr(page,'url','n/a')}")
             page.quit()
             logger.info('DrissionPage終了')
         except Exception as e:

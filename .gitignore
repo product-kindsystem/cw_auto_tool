@@ -8,4 +8,5 @@
 /*.pkl
 /*.json
 /*.spec
-z_memo.txt
+*.txt
+*.bmp
